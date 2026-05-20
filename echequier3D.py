@@ -22,6 +22,8 @@ class Echequier3D(ShowBase):
 
         self.taskMgr.add(self.update, "update")
         self.command_queue = Queue()
+        self.pions_par_xy = {}
+        self.pions_perdus = []
 
     def add_command(self, func, *args, **kwargs):
         self.command_queue.put((func, args, kwargs))
@@ -60,10 +62,12 @@ class Echequier3D(ShowBase):
                 if val == 0:
                     continue
 
-                pos = self._case_to_world(x, 9-y)
+                xy = (x, 9-y)
+                pos = self._case_to_world(*xy)
 
                 color = ROUGE if val == 1 else BLEU
-                self.add_pion(pos, color)
+                pion = self.add_pion(pos, color)
+                self.pions_par_xy[xy] = pion
 
     # =========================================================
     # COUPS (DOIT UTILISER MÊME REPERE QUE MATRICE TRANSFORMEE)
@@ -71,30 +75,144 @@ class Echequier3D(ShowBase):
 
     def jouer_coups(self, liste_cases):
 
-        coords = []
+        if len(liste_cases) < 2:
+            return
 
-        for case in liste_cases:
-            x, y = self._case_to_xy(case)
+        chemin_xy = [self._case_to_xy(case) for case in liste_cases]
+        pieces_mangees_xy = self._pieces_mangees_sur_chemin(chemin_xy)
+        coords = [self._case_to_world(x, y) for x, y in chemin_xy]
 
-            # IMPORTANT : cohérence même repère que matrice
-            #coords.append(self._case_to_world(x-1, y))
-            coords.append(self._case_to_world(x, y))
+        pos_init = (POS_BRAS_REPOS_X, POS_BRAS_REPOS_Y, POS_BRAS_REPOS_Z)
+        pion_joue = self.pions_par_xy.get(chemin_xy[0])
+
+        def animation():
+            position_bras = pos_init
+
+            if pion_joue is None:
+                chemin_bras = [pos_init] + coords + [pos_init]
+
+                for i in range(len(chemin_bras) - 1):
+                    self._animer_trajectoire(
+                        chemin_bras[i],
+                        chemin_bras[i + 1],
+                        DUREE_ANIM
+                    )
+
+                return
+
+            self.pions_par_xy.pop(chemin_xy[0], None)
+            self._animer_trajectoire(position_bras, coords[0], DUREE_ANIM)
+            position_bras = coords[0]
+
+            for i in range(len(coords) - 1):
+                self._animer_trajectoire(
+                    coords[i],
+                    coords[i + 1],
+                    DUREE_ANIM,
+                    pion=pion_joue
+                )
+                position_bras = coords[i + 1]
+
+            self.pions_par_xy[chemin_xy[-1]] = pion_joue
+
+            for piece_xy in pieces_mangees_xy:
+                position_bras = self._animer_piece_perdue(piece_xy, position_bras)
+
+            self._animer_trajectoire(position_bras, pos_init, DUREE_ANIM)
+
+        threading.Thread(target=animation, daemon=True).start()
+
+    def piece_perdu(self, cases):
+        pieces_xy = self._normaliser_cases_perdues(cases)
+        if not pieces_xy:
+            return
 
         pos_init = (POS_BRAS_REPOS_X, POS_BRAS_REPOS_Y, POS_BRAS_REPOS_Z)
 
-        coords.insert(0, pos_init)
-        coords.append(pos_init)
-
         def animation():
-            for i in range(len(coords) - 1):
+            position_bras = pos_init
 
-                start = coords[i]
-                end = coords[i + 1]
+            for piece_xy in pieces_xy:
+                position_bras = self._animer_piece_perdue(piece_xy, position_bras)
 
-                self.add_command(self.deplacer_vers, start, end, DUREE_ANIM)
-                time.sleep(DUREE_ANIM * 2)
+            self._animer_trajectoire(position_bras, pos_init, DUREE_ANIM)
 
         threading.Thread(target=animation, daemon=True).start()
+
+    def _normaliser_cases_perdues(self, cases):
+        if cases is None:
+            return []
+
+        if isinstance(cases, int):
+            return [self._case_to_xy(cases)]
+
+        if self._est_coord_xy(cases):
+            return [tuple(cases)]
+
+        pieces_xy = []
+
+        for case in cases:
+            if isinstance(case, int):
+                pieces_xy.append(self._case_to_xy(case))
+            elif self._est_coord_xy(case):
+                pieces_xy.append(tuple(case))
+
+        return pieces_xy
+
+    def _est_coord_xy(self, valeur):
+        return (
+            isinstance(valeur, (tuple, list))
+            and len(valeur) == 2
+            and all(isinstance(coord, (int, float)) for coord in valeur)
+        )
+
+    def _pieces_mangees_sur_chemin(self, chemin_xy):
+        pieces_mangees = []
+
+        for depart, arrivee in zip(chemin_xy, chemin_xy[1:]):
+            dx = arrivee[0] - depart[0]
+            dy = arrivee[1] - depart[1]
+
+            if dx == 0 or dy == 0 or abs(dx) != abs(dy):
+                continue
+
+            pas_x = 1 if dx > 0 else -1
+            pas_y = 1 if dy > 0 else -1
+            x = depart[0] + pas_x
+            y = depart[1] + pas_y
+
+            while (x, y) != arrivee:
+                if (x, y) in self.pions_par_xy:
+                    pieces_mangees.append((x, y))
+                x += pas_x
+                y += pas_y
+
+        return pieces_mangees
+
+    def _animer_piece_perdue(self, piece_xy, position_bras):
+        pion = self.pions_par_xy.pop(piece_xy, None)
+
+        if pion is None:
+            return position_bras
+
+        depart = self._case_to_world(*piece_xy)
+        arrivee = self._position_piece_perdue()
+
+        self._animer_trajectoire(position_bras, depart, DUREE_ANIM)
+        self._animer_trajectoire(depart, arrivee, DUREE_ANIM, pion=pion)
+
+        self.pions_perdus.append(pion)
+        return arrivee
+
+    def _position_piece_perdue(self):
+        index = len(self.pions_perdus)
+        ligne = index % PIECES_PERDUES_PAR_COLONNE
+        colonne = index // PIECES_PERDUES_PAR_COLONNE
+
+        x = PIECES_PERDUES_X - colonne * PIECES_PERDUES_SPACING
+        y = PIECES_PERDUES_Y + ligne * PIECES_PERDUES_SPACING
+
+        return (x, y, 0)
 
     # =========================================================
     # CASES
@@ -141,10 +259,12 @@ class Echequier3D(ShowBase):
     # =========================================================
 
     def clear_pions(self):
+        self.pions_par_xy.clear()
+        self.pions_perdus.clear()
         self.scene.clear_pions()
 
     def add_pion(self, pos, color):
-        self.scene.add_pion(pos, color)
+        return self.scene.add_pion(pos, color)
 
     def viser_point(self, x, y, z):
         self.scene.bras_viser_point(x, y, z)
@@ -160,6 +280,13 @@ class Echequier3D(ShowBase):
         return x, y, z
 
     def deplacer_vers(self, start, end, duration=1.0):
+        threading.Thread(
+            target=self._animer_trajectoire,
+            args=(start, end, duration),
+            daemon=True
+        ).start()
+
+    def _animer_trajectoire(self, start, end, duration=1.0, pion=None):
 
         start = (start[0], start[1], start[2] + PION_Z_MINI)
         end = (end[0], end[1], end[2] + PION_Z_MINI)
@@ -173,20 +300,22 @@ class Echequier3D(ShowBase):
         steps = 30
         dt = duration / steps
 
-        def animation():
-            for i in range(steps + 1):
-                t = i / steps
+        for i in range(steps + 1):
+            t = i / steps
 
-                x, y, z = self.bezier_quadratique(start, mid, end, t)
+            x, y, z = self.bezier_quadratique(start, mid, end, t)
 
-                self.scene.base.taskMgr.add(
-                    lambda task, x=x, y=y, z=z: self._viser_task(task, x, y, z),
-                    f"move_arm_{i}"
-                )
+            if pion is None:
+                self.add_command(self.viser_point, x, y, z)
+            else:
+                z_pion = max(0, z - PION_Z_MINI)
+                self.add_command(self._placer_bras_et_pion, pion, x, y, z, z_pion)
 
-                time.sleep(dt)
+            time.sleep(dt)
 
-        threading.Thread(target=animation, daemon=True).start()
+    def _placer_bras_et_pion(self, pion, x, y, z_bras, z_pion):
+        self.viser_point(x, y, z_bras)
+        pion.set_position((x, y, z_pion))
 
 
 if __name__ == "__main__":
