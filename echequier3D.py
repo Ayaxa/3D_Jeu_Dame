@@ -65,7 +65,7 @@ class Echequier3D(ShowBase):
                 xy = (x, 9-y)
                 pos = self._case_to_world(*xy)
 
-                color = BLEU if val == 1 else VERT
+                color = ROUGE if val == 1 else VERT
                 pion = self.add_pion(pos, color)
                 self.pions_par_xy[xy] = pion
 

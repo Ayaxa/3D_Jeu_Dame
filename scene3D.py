@@ -25,6 +25,10 @@ class Scene:
         #    "speed": 60
         #})
 
+
+        ## --- AXES (debug) ---
+        self.axes = AxesDebug(self.base, self.render)
+
         ## plateau + texture
         self.plateau = Plateau(self.base, self.render)
 
