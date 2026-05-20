@@ -1,0 +1,94 @@
+import cv2
+import numpy as np
+import csv
+import copy
+
+
+def lire_points_csv(fichier):
+    points = []
+    with open(fichier, 'r') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            x = float(row[0])
+            y = float(row[1])
+            points.append(np.array([x, y], dtype=np.float32))
+    return points   # <<< corrigé
+
+
+def order_points(pts):
+    # pts : liste de 4 arrays [x, y]
+
+    # Étape 1 : trier par y (haut -> bas)
+    pts_sorted_y = sorted(pts, key=lambda p: p[1])
+
+    # Les deux du haut
+    top = pts_sorted_y[:2]
+    # Les deux du bas
+    bottom = pts_sorted_y[2:]
+
+    # Étape 2 : trier par x
+    top_sorted = sorted(top, key=lambda p: p[0])
+    bottom_sorted = sorted(bottom, key=lambda p: p[0])
+
+    P0 = top_sorted[0]     # haut gauche
+    P1 = top_sorted[1]     # haut droit
+    P2 = bottom_sorted[1]  # bas droit
+    P3 = bottom_sorted[0]  # bas gauche
+
+    return np.array([P0, P1, P2, P3], dtype=np.float32)
+
+
+def quadrillage(img, points):
+    image = copy.copy(img)
+
+    # tri des 4 points
+    P0, P1, P2, P3 = order_points(points)
+
+    # grille 11 x 11 ⇒ 10 x 10 cases
+    grid_points = [[None for _ in range(11)] for _ in range(11)]
+
+    for i in range(11):
+        t = i / 10.0
+        left = (1 - t) * P0 + t * P3      # côté gauche
+        right = (1 - t) * P1 + t * P2     # côté droit
+
+        for j in range(11):
+            u = j / 10.0
+            pt = (1 - u) * left + u * right
+            grid_points[i][j] = tuple(np.int32(pt))
+
+    # tracer lignes horizontales
+    for i in range(11):
+        for j in range(10):
+            cv2.line(image,
+                     grid_points[i][j],
+                     grid_points[i][j+1],
+                     (0, 0, 255), 2)
+
+    # tracer lignes verticales
+    for j in range(11):
+        for i in range(10):
+            cv2.line(image,
+                     grid_points[i][j],
+                     grid_points[i+1][j],
+                     (0, 0, 255), 2)
+
+    return image
+
+
+if __name__ == '__main__':
+
+    points = lire_points_csv("coordonneeDamier.csv")
+    #print("Points lus :", points)
+
+    if len(points) != 4:
+        raise RuntimeError("Le fichier CSV doit contenir exactement 4 lignes (4 points).")
+
+    image = cv2.imread("dataReference/imageReference.jpg")
+    if image is None:
+        raise RuntimeError("Impossible d'ouvrir imageReference.jpg")
+
+    image_out = quadrillage(image, points)
+
+    cv2.imwrite("aVirer_damier.png", image_out)
+    print("-- aVirer_damier.png")
